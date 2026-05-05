@@ -18,13 +18,14 @@ def home():
     return {"message": f"Hello from {SERVER_NAME}"}
 
 # this runs when someone opens "/work"
+import asyncio
 @app.get("/work")
-def do_work(delay: int = Query(0, description="Delay in seconds")):
+async def do_work(delay: int = Query(0, description="Delay in seconds")):
     # delay means how many seconds we want to wait
     # if user doesn't give anything, it will be 0 by default
 
     # this line makes the server wait (like doing some heavy work)
-    time.sleep(delay)
+    await asyncio.sleep(delay)
 
     # after waiting, we send back the response
     return {

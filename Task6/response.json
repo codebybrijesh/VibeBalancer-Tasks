@@ -1,0 +1,11 @@
+{
+  "application": {
+    "total_requests": 10,
+    "active_connections": 0,
+    "total_errors": 0
+  },
+  "system": {
+    "cpu_usage_percent": 6.7,
+    "memory_usage_percent": 29.0
+  }
+}

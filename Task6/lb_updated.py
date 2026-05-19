@@ -1,7 +1,15 @@
 from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import Response
 import httpx
 import asyncio
 import psutil
+
+from prometheus_client import (
+    Counter,
+    Gauge,
+    generate_latest,
+    CONTENT_TYPE_LATEST
+)
 
 app = FastAPI()
 
@@ -9,25 +17,61 @@ servers = [
     "http://localhost:8001",
     "http://localhost:8002"
 ]
-
-# round robin pointer
+# LOAD BALANCER STATE
 current = 0
 
-# active connections
 connections = {
     "http://localhost:8001": 0,
     "http://localhost:8002": 0
 }
 
-# backend health
 server_health = {
     "http://localhost:8001": True,
     "http://localhost:8002": True
 }
 
-# strategy
 strategy = "round_robin"
 
+# PROMETHEUS METRICS
+
+REQUEST_COUNT = Counter(
+    "load_balancer_requests_total",
+    "Total requests received"
+)
+
+ERROR_COUNT = Counter(
+    "load_balancer_errors_total",
+    "Total failed requests"
+)
+
+ACTIVE_CONNECTIONS = Gauge(
+    "load_balancer_active_connections",
+    "Current active connections"
+)
+
+CPU_USAGE = Gauge(
+    "system_cpu_usage_percent",
+    "CPU usage percent"
+)
+
+MEMORY_USAGE = Gauge(
+    "system_memory_usage_percent",
+    "Memory usage percent"
+)
+
+BACKEND_HEALTH = Gauge(
+    "backend_server_health",
+    "Backend health status",
+    ["server"]
+)
+
+BACKEND_CONNECTIONS = Gauge(
+    "backend_active_connections",
+    "Backend active connections",
+    ["server"]
+)
+
+# HOME
 
 @app.get("/")
 def home():
@@ -36,6 +80,9 @@ def home():
         "strategy": strategy
     }
 
+# =========================
+# CHANGE STRATEGY
+# =========================
 
 @app.get("/strategy")
 def change_strategy(type: str):
@@ -47,6 +94,7 @@ def change_strategy(type: str):
 
     return {"strategy": strategy}
 
+# BACKENDS
 
 @app.get("/backends")
 def backends():
@@ -55,16 +103,14 @@ def backends():
         "backends": [
             {
                 "url": server,
-                "healthy": server_health[server]
+                "healthy": server_health[server],
+                "connections": connections[server]
             }
             for server in servers
         ]
     }
 
-
 # HEALTH CHECK LOOP
-
-
 async def health_checker():
 
     while True:
@@ -85,21 +131,19 @@ async def health_checker():
             except:
                 server_health[server] = False
 
-        print("\nServer Health:")
-        print(server_health)
+            # Update Prometheus health metric
+            BACKEND_HEALTH.labels(server=server).set(
+                1 if server_health[server] else 0
+            )
 
         await asyncio.sleep(5)
-
 
 @app.on_event("startup")
 async def startup_event():
 
     asyncio.create_task(health_checker())
 
-
 # SERVER SELECTION
-
-
 def get_healthy_servers():
 
     return [
@@ -107,8 +151,6 @@ def get_healthy_servers():
         for server in servers
         if server_health[server]
     ]
-
-
 def get_round_robin_server(healthy_servers):
 
     global current
@@ -122,9 +164,7 @@ def get_round_robin_server(healthy_servers):
 
     return server
 
-
 def get_least_connection_server(healthy_servers):
-
     if not healthy_servers:
         return None
 
@@ -132,74 +172,75 @@ def get_least_connection_server(healthy_servers):
         healthy_servers,
         key=lambda s: connections[s]
     )
-
-
 # MAIN WORK ENDPOINT
-
 
 @app.get("/work")
 async def work(delay: int = Query(0)):
 
-    global total_requests
-    global active_connections
-    global total_errors
-
-    total_requests += 1
-    active_connections += 1
+    REQUEST_COUNT.inc()
+    ACTIVE_CONNECTIONS.inc()
 
     healthy_servers = get_healthy_servers()
 
     if not healthy_servers:
 
-        total_errors += 1
-
-        active_connections -= 1
+        ERROR_COUNT.inc()
+        ACTIVE_CONNECTIONS.dec()
 
         raise HTTPException(
             status_code=503,
             detail="No healthy backend servers available"
         )
 
+    # Select backend server
+    if strategy == "round_robin":
+        server = get_round_robin_server(healthy_servers)
+    else:
+        server = get_least_connection_server(healthy_servers)
+
     try:
 
-        # existing forwarding logic here
+        connections[server] += 1
 
-        pass
+        BACKEND_CONNECTIONS.labels(
+            server=server
+        ).set(connections[server])
 
-    except Exception:
+        async with httpx.AsyncClient() as client:
 
-        total_errors += 1
+            response = await client.get(
+                f"{server}/work",
+                params={"delay": delay}
+            )
 
-        raise
+        return response.json()
+
+    except Exception as e:
+
+        ERROR_COUNT.inc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
     finally:
 
-        active_connections -= 1
+        connections[server] -= 1
 
-# APPLICATION METRICS
+        BACKEND_CONNECTIONS.labels(
+            server=server
+        ).set(connections[server])
 
-total_requests = 0
-active_connections = 0
-total_errors = 0
-
+        ACTIVE_CONNECTIONS.dec()
+# METRICS ENDPOINT
 @app.get("/metrics")
 def metrics():
 
-    return {
+    CPU_USAGE.set(psutil.cpu_percent())
+    MEMORY_USAGE.set(psutil.virtual_memory().percent)
 
-        "application": {
-
-            "total_requests": total_requests,
-
-            "active_connections": active_connections,
-
-            "total_errors": total_errors
-        },
-
-        "system": {
-
-            "cpu_usage_percent": psutil.cpu_percent(),
-
-            "memory_usage_percent": psutil.virtual_memory().percent
-        }
-    }
+    return Response(
+        generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )

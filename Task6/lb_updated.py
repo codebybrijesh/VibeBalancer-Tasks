@@ -17,6 +17,7 @@ servers = [
     "http://localhost:8001",
     "http://localhost:8002"
 ]
+
 # LOAD BALANCER STATE
 current = 0
 
@@ -80,9 +81,7 @@ def home():
         "strategy": strategy
     }
 
-# =========================
 # CHANGE STRATEGY
-# =========================
 
 @app.get("/strategy")
 def change_strategy(type: str):
@@ -111,6 +110,7 @@ def backends():
     }
 
 # HEALTH CHECK LOOP
+
 async def health_checker():
 
     while True:
@@ -128,15 +128,15 @@ async def health_checker():
                     else:
                         server_health[server] = False
 
-            except:
+            except Exception:
                 server_health[server] = False
 
-            # Update Prometheus health metric
             BACKEND_HEALTH.labels(server=server).set(
                 1 if server_health[server] else 0
             )
 
         await asyncio.sleep(5)
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -144,6 +144,7 @@ async def startup_event():
     asyncio.create_task(health_checker())
 
 # SERVER SELECTION
+
 def get_healthy_servers():
 
     return [
@@ -151,6 +152,8 @@ def get_healthy_servers():
         for server in servers
         if server_health[server]
     ]
+
+
 def get_round_robin_server(healthy_servers):
 
     global current
@@ -164,7 +167,9 @@ def get_round_robin_server(healthy_servers):
 
     return server
 
+
 def get_least_connection_server(healthy_servers):
+
     if not healthy_servers:
         return None
 
@@ -172,6 +177,7 @@ def get_least_connection_server(healthy_servers):
         healthy_servers,
         key=lambda s: connections[s]
     )
+
 # MAIN WORK ENDPOINT
 
 @app.get("/work")
@@ -233,12 +239,48 @@ async def work(delay: int = Query(0)):
         ).set(connections[server])
 
         ACTIVE_CONNECTIONS.dec()
+
 # METRICS ENDPOINT
+
+# JSON METRICS ENDPOINT
+
 @app.get("/metrics")
 def metrics():
 
-    CPU_USAGE.set(psutil.cpu_percent())
-    MEMORY_USAGE.set(psutil.virtual_memory().percent)
+    cpu = psutil.cpu_percent()
+    memory = psutil.virtual_memory().percent
+
+    CPU_USAGE.set(cpu)
+    MEMORY_USAGE.set(memory)
+
+    return {
+        "application": {
+            "total_requests": REQUEST_COUNT._value.get(),
+            "active_connections": ACTIVE_CONNECTIONS._value.get(),
+            "total_errors": ERROR_COUNT._value.get()
+        },
+        "system": {
+            "cpu_usage_percent": cpu,
+            "memory_usage_percent": memory
+        },
+        "backend_servers": {
+            "server_1": {
+                "healthy": server_health["http://localhost:8001"],
+                "active_connections": connections["http://localhost:8001"]
+            },
+            "server_2": {
+                "healthy": server_health["http://localhost:8002"],
+                "active_connections": connections["http://localhost:8002"]
+            }
+        },
+        "current_strategy": strategy
+    }
+
+
+# PROMETHEUS METRICS ENDPOINT
+
+@app.get("/prometheus")
+def prometheus_metrics():
 
     return Response(
         generate_latest(),

@@ -5,17 +5,7 @@ The `/metrics` endpoint successfully exposed both application-level and system-l
 ## Metrics Response
 
 ```json
-{
-  "application": {
-    "total_requests": 10,
-    "active_connections": 0,
-    "total_errors": 0
-  },
-  "system": {
-    "cpu_usage_percent": 6.7,
-    "memory_usage_percent": 29.0
-  }
-}
+{"application":{"total_requests":20.0,"active_connections":0.0,"total_errors":0.0},"system":{"cpu_usage_percent":2.7,"memory_usage_percent":23.4},"backend_servers":{"server_1":{"healthy":true,"active_connections":0},"server_2":{"healthy":true,"active_connections":0}},"current_strategy":"least_connections"}
 ```
 
 ---
@@ -24,7 +14,7 @@ The `/metrics` endpoint successfully exposed both application-level and system-l
 
 ## Application Metrics
 
-- `total_requests` increased to 10 after running the concurrent client script.
+- `total_requests` increased to 20 after running the concurrent client script.
 - `active_connections` returned to 0 after all requests completed.
 - `total_errors` remained 0, indicating successful request handling.
 
